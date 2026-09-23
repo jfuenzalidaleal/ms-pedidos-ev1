@@ -20,7 +20,7 @@ public class OrderController {
     //Crear nuevo pedido (cliente/op/adm)
 
     @PostMapping
-    public ResponseEntity<Order> crearPedido(@ResponseBody Order order){
+    public ResponseEntity<Order> crearPedido(@RequestBody Order order){
         Order nuevoPedido = orderService.crearPedido(order);
         return new ResponseEntity<>(nuevoPedido, HttpStatus.CREATED);
     }

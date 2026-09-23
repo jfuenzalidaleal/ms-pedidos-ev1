@@ -24,7 +24,7 @@ public class OrderService {
     }
 
     public List<Order> obtenerPorCliente(String clienteId) {
-        return orderRepository.findByClienteID(clienteId);
+        return orderRepository.findByClienteId(clienteId);
     }
 
     public Order obtenerPorId(Long id){
