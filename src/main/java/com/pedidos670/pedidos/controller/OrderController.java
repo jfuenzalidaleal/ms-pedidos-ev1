@@ -10,6 +10,7 @@ import  java.util.List;
 
 @RestController
 @RequestMapping("/api/pedidos")
+@CrossOrigin(origins="*")
 public class OrderController {
     private final OrderService orderService;
 
@@ -42,6 +43,10 @@ public class OrderController {
     public ResponseEntity<Order> cambiarEstado(@PathVariable Long id, @RequestParam OrderStatus status) {
         Order pedidoActualizado = orderService.cambiarEstado(id, status);
         return ResponseEntity.ok(pedidoActualizado);
+    }
+    @GetMapping
+    public ResponseEntity<List<Order>> obtenerTodos() {
+        return ResponseEntity.ok(orderService.obtenerTodos());
     }
 
 
