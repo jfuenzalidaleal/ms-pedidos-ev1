@@ -7,6 +7,7 @@ import com.pedidos670.pedidos.model.OrderStatus;
 import com.pedidos670.pedidos.repository.OrderRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -14,13 +15,13 @@ import java.util.List;
 public class OrderService {
     private final OrderRepository orderRepository;
     private final CatalogClient catalogClient;
+
     public OrderService(OrderRepository orderRepository, CatalogClient catalogClient) {
         this.orderRepository = orderRepository;
         this.catalogClient = catalogClient;
     }
 
-    public List<Order> obtenerTodos(){
-
+    public List<Order> obtenerTodos() {
         return orderRepository.findAll();
     }
 
@@ -28,8 +29,9 @@ public class OrderService {
         return orderRepository.findByClienteId(clienteId);
     }
 
-    public Order obtenerPorId(Long id){
-        return orderRepository.findById(id).orElseThrow(() -> new RuntimeException("Pedido no encontrado con ID: " + id));
+    public Order obtenerPorId(Long id) {
+        return orderRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Pedido no encontrado con ID: " + id));
     }
 
     @Transactional
@@ -37,12 +39,13 @@ public class OrderService {
         order.setEstado(OrderStatus.CREADO);
         order.setFechaCreacion(LocalDateTime.now());
 
-        // Se calcula el tyotal del pedido
-        double total = order.getItems().stream().mapToDouble(item -> item.getPrecioUnitario() * item.getCantidad()).sum();
+        // Se calcula el total del pedido
+        double total = order.getItems().stream()
+                .mapToDouble(item -> item.getPrecioUnitario() * item.getCantidad())
+                .sum();
         order.setTotal(total);
 
         return orderRepository.save(order);
-
     }
 
     @Transactional
@@ -50,19 +53,45 @@ public class OrderService {
         Order order = obtenerPorId(id);
         OrderStatus estadoActual = order.getEstado();
 
-        //Validamos regla de negocio: no se puede despachar sin haber sido aceptado
-        if (nuevoEstado == OrderStatus.DESPACHADO && estadoActual != OrderStatus.ACEPTADO && estadoActual != OrderStatus.EN_PREPARACION){
-            throw new IllegalStateException("El producto no está Aceptado para ser Despachado");
+        // 1. Validar la transición completa del flujo de estados
+        if (!esTransicionValida(estadoActual, nuevoEstado)) {
+            throw new IllegalStateException("Transición de estado no permitida: de " + estadoActual + " a " + nuevoEstado);
         }
 
-        //Al pasar a ACEPTADO se reduce el stock
-        if (nuevoEstado == OrderStatus.ACEPTADO && estadoActual == OrderStatus.CREADO){
-            for (OrderItem item : order.getItems()){
+        // 2. Al pasar a ACEPTADO desde CREADO, se reduce el stock en ms-catalogo
+        if (nuevoEstado == OrderStatus.ACEPTADO && estadoActual == OrderStatus.CREADO) {
+            for (OrderItem item : order.getItems()) {
                 catalogClient.reducirStock(item.getProductoId(), item.getCantidad());
             }
         }
+
         order.setEstado(nuevoEstado);
         return orderRepository.save(order);
+    }
 
+    /**
+     * Regla de transiciones permitidas:
+     * CREADO -> ACEPTADO, CANCELADO
+     * ACEPTADO -> EN_PREPARACION, CANCELADO
+     * EN_PREPARACION -> DESPACHADO, CANCELADO
+     * DESPACHADO -> ENTREGADO, CANCELADO
+     * ENTREGADO / CANCELADO -> (Estados finales, no permiten más cambios)
+     */
+    private boolean esTransicionValida(OrderStatus actual, OrderStatus nuevo) {
+        if (actual == nuevo) return true;
+        if (nuevo == OrderStatus.CANCELADO) return actual != OrderStatus.ENTREGADO;
+
+        switch (actual) {
+            case CREADO:
+                return nuevo == OrderStatus.ACEPTADO;
+            case ACEPTADO:
+                return nuevo == OrderStatus.EN_PREPARACION;
+            case EN_PREPARACION:
+                return nuevo == OrderStatus.DESPACHADO;
+            case DESPACHADO:
+                return nuevo == OrderStatus.ENTREGADO;
+            default:
+                return false;
+        }
     }
 }
