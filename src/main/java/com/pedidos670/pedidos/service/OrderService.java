@@ -13,10 +13,14 @@ import java.util.List;
 
 @Service
 public class OrderService {
+
     private final OrderRepository orderRepository;
     private final CatalogClient catalogClient;
 
-    public OrderService(OrderRepository orderRepository, CatalogClient catalogClient) {
+    public OrderService(
+            OrderRepository orderRepository,
+            CatalogClient catalogClient
+    ) {
         this.orderRepository = orderRepository;
         this.catalogClient = catalogClient;
     }
@@ -31,65 +35,154 @@ public class OrderService {
 
     public Order obtenerPorId(Long id) {
         return orderRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Pedido no encontrado con ID: " + id));
+                .orElseThrow(() ->
+                        new RuntimeException(
+                                "Pedido no encontrado con ID: " + id
+                        )
+                );
     }
 
     @Transactional
     public Order crearPedido(Order order) {
+
         order.setEstado(OrderStatus.CREADO);
         order.setFechaCreacion(LocalDateTime.now());
 
-        // Se calcula el total del pedido
-        double total = order.getItems().stream()
-                .mapToDouble(item -> item.getPrecioUnitario() * item.getCantidad())
+        double total = order.getItems()
+                .stream()
+                .mapToDouble(item ->
+                        item.getPrecioUnitario()
+                                * item.getCantidad()
+                )
                 .sum();
+
         order.setTotal(total);
 
         return orderRepository.save(order);
     }
 
+    /**
+     * Solo OPERADOR / ADMIN deberían llegar a este método
+     * a través del BFF.
+     */
     @Transactional
-    public Order cambiarEstado(Long id, OrderStatus nuevoEstado) {
-        Order order = obtenerPorId(id);
-        OrderStatus estadoActual = order.getEstado();
+    public Order cambiarEstado(
+            Long id,
+            OrderStatus nuevoEstado
+    ) {
 
-        // 1. Validar la transición completa del flujo de estados
-        if (!esTransicionValida(estadoActual, nuevoEstado)) {
-            throw new IllegalStateException("Transición de estado no permitida: de " + estadoActual + " a " + nuevoEstado);
+        Order order = obtenerPorId(id);
+
+        OrderStatus estadoActual =
+                order.getEstado();
+
+        // CANCELADO tiene un endpoint separado para CLIENTE.
+        if (nuevoEstado == OrderStatus.CANCELADO) {
+            throw new IllegalStateException(
+                    "La cancelación debe realizarse mediante el endpoint de cancelar pedido"
+            );
         }
 
-        // 2. Al pasar a ACEPTADO desde CREADO, se reduce el stock en ms-catalogo
-        if (nuevoEstado == OrderStatus.ACEPTADO && estadoActual == OrderStatus.CREADO) {
+        if (!esTransicionValida(
+                estadoActual,
+                nuevoEstado
+        )) {
+            throw new IllegalStateException(
+                    "Transición de estado no permitida: de "
+                            + estadoActual
+                            + " a "
+                            + nuevoEstado
+            );
+        }
+
+        // El stock se descuenta una sola vez:
+        // cuando el pedido pasa de CREADO a ACEPTADO.
+        if (
+                estadoActual == OrderStatus.CREADO
+                        && nuevoEstado == OrderStatus.ACEPTADO
+        ) {
+
             for (OrderItem item : order.getItems()) {
-                catalogClient.reducirStock(item.getProductoId(), item.getCantidad());
+
+                catalogClient.reducirStock(
+                        item.getProductoId(),
+                        item.getCantidad()
+                );
             }
         }
 
         order.setEstado(nuevoEstado);
+
         return orderRepository.save(order);
     }
 
     /**
-     * Regla de transiciones permitidas:
-     * CREADO -> ACEPTADO, CANCELADO
-     * ACEPTADO -> EN_PREPARACION, CANCELADO
-     * EN_PREPARACION -> DESPACHADO, CANCELADO
-     * DESPACHADO -> ENTREGADO, CANCELADO
-     * ENTREGADO / CANCELADO -> (Estados finales, no permiten más cambios)
+     * Cancelación exclusiva para el flujo del CLIENTE.
+     *
+     * El cliente solo puede cancelar mientras el pedido
+     * todavía está en estado CREADO.
      */
-    private boolean esTransicionValida(OrderStatus actual, OrderStatus nuevo) {
-        if (actual == nuevo) return true;
-        if (nuevo == OrderStatus.CANCELADO) return actual != OrderStatus.ENTREGADO;
+    @Transactional
+    public Order cancelarPedido(Long id) {
+
+        Order order = obtenerPorId(id);
+
+        if (order.getEstado() != OrderStatus.CREADO) {
+
+            throw new IllegalStateException(
+                    "Solo se puede cancelar un pedido que esté en estado CREADO"
+            );
+        }
+
+        order.setEstado(
+                OrderStatus.CANCELADO
+        );
+
+        return orderRepository.save(order);
+    }
+
+    /**
+     * Flujo válido de OPERADOR / ADMIN:
+     *
+     * CREADO
+     *   -> ACEPTADO
+     *
+     * ACEPTADO
+     *   -> EN_PREPARACION
+     *
+     * EN_PREPARACION
+     *   -> DESPACHADO
+     *
+     * DESPACHADO
+     *   -> ENTREGADO
+     *
+     * ENTREGADO y CANCELADO son estados finales.
+     */
+    private boolean esTransicionValida(
+            OrderStatus actual,
+            OrderStatus nuevo
+    ) {
+
+        if (actual == nuevo) {
+            return false;
+        }
 
         switch (actual) {
+
             case CREADO:
                 return nuevo == OrderStatus.ACEPTADO;
+
             case ACEPTADO:
                 return nuevo == OrderStatus.EN_PREPARACION;
+
             case EN_PREPARACION:
                 return nuevo == OrderStatus.DESPACHADO;
+
             case DESPACHADO:
                 return nuevo == OrderStatus.ENTREGADO;
+
+            case ENTREGADO:
+            case CANCELADO:
             default:
                 return false;
         }
