@@ -6,7 +6,10 @@ import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
-@FeignClient(name = "ms-catalogo", url = "http://localhost:8082/api/catalogo/productos")
+@FeignClient(
+        name = "ms-catalogo",
+        url = "${catalog.service.url}/api/catalogo/productos"
+)
 public interface CatalogClient {
 
     @PutMapping("/{id}/stock")
