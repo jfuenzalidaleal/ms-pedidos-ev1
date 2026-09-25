@@ -140,6 +140,27 @@ public class OrderService {
 
         return orderRepository.save(order);
     }
+    @Transactional
+    public Order cancelarPedidoAdmin(Long id) {
+
+        Order order = obtenerPorId(id);
+
+        if (order.getEstado() == OrderStatus.CANCELADO) {
+            throw new IllegalStateException(
+                    "El pedido ya se encuentra cancelado"
+            );
+        }
+
+        if (order.getEstado() == OrderStatus.ENTREGADO) {
+            throw new IllegalStateException(
+                    "No se puede cancelar un pedido que ya fue entregado"
+            );
+        }
+
+        order.setEstado(OrderStatus.CANCELADO);
+
+        return orderRepository.save(order);
+    }
 
     /**
      * Flujo válido de OPERADOR / ADMIN:

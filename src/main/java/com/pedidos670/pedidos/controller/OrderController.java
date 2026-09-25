@@ -105,6 +105,35 @@ public class OrderController {
                     );
         }
     }
+    // Cancelar pedido como ADMIN
+// Permite cancelar mientras NO esté ENTREGADO ni CANCELADO
+    @PatchMapping("/{id}/cancelar-admin")
+    public ResponseEntity<?> cancelarPedidoAdmin(
+            @PathVariable Long id
+    ) {
+        try {
+
+            Order pedidoCancelado =
+                    orderService.cancelarPedidoAdmin(id);
+
+            return ResponseEntity.ok(pedidoCancelado);
+
+        } catch (IllegalStateException e) {
+
+            return ResponseEntity
+                    .badRequest()
+                    .body(e.getMessage());
+
+        } catch (Exception e) {
+
+            return ResponseEntity
+                    .status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(
+                            "Error al cancelar el pedido como ADMIN: "
+                                    + e.getMessage()
+                    );
+        }
+    }
 
     // Obtener todos los pedidos
     @GetMapping
