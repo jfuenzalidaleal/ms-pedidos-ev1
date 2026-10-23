@@ -6,11 +6,10 @@ spring:
     name: ms-pedidos360-orders
 
   datasource:
-    # Usamos la ruta relativa ./src/main/resources/wallet para que funcione en cualquier PC
-    url: jdbc:oracle:thin:@pedidos_high?TNS_ADMIN=./src/main/resources/wallet
-    username: ADMIN
-    password: Pedidos...670 # Coloca tu contraseña real de Oracle Cloud
-    driver-class-name: oracle.jdbc.OracleDriver
+    url: jdbc:postgresql://localhost:5432/pedidos
+    username: postgres
+    password: 'admin'
+    driver-class-name: org.postgresql.Driver
 
     hikari:
       maximum-pool-size: 5
@@ -19,7 +18,7 @@ spring:
       connection-timeout: 20000
 
   jpa:
-    database-platform: org.hibernate.dialect.OracleDialect
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
     hibernate:
       ddl-auto: update
     show-sql: true
