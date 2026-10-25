@@ -5,6 +5,7 @@ import com.pedidos670.pedidos.model.Order;
 import com.pedidos670.pedidos.model.OrderItem;
 import com.pedidos670.pedidos.model.OrderStatus;
 import com.pedidos670.pedidos.repository.OrderRepository;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -15,78 +16,113 @@ import java.util.List;
 public class OrderService {
 
     private final OrderRepository orderRepository;
+
     private final CatalogClient catalogClient;
+
+    private final PedidoEventPublisher pedidoEventPublisher;
 
     public OrderService(
             OrderRepository orderRepository,
-            CatalogClient catalogClient
+            CatalogClient catalogClient,
+            PedidoEventPublisher pedidoEventPublisher
     ) {
+
         this.orderRepository = orderRepository;
         this.catalogClient = catalogClient;
+        this.pedidoEventPublisher = pedidoEventPublisher;
     }
 
     public List<Order> obtenerTodos() {
+
         return orderRepository.findAll();
     }
 
-    public List<Order> obtenerPorCliente(String clienteId) {
-        return orderRepository.findByClienteId(clienteId);
+    public List<Order> obtenerPorCliente(
+            String clienteId
+    ) {
+
+        return orderRepository
+                .findByClienteId(clienteId);
     }
 
-    public Order obtenerPorId(Long id) {
-        return orderRepository.findById(id)
-                .orElseThrow(() ->
-                        new RuntimeException(
-                                "Pedido no encontrado con ID: " + id
+    public Order obtenerPorId(
+            Long id
+    ) {
+
+        return orderRepository
+                .findById(id)
+                .orElseThrow(
+                        () -> new RuntimeException(
+                                "Pedido no encontrado con ID: "
+                                        + id
                         )
                 );
     }
 
     @Transactional
-    public Order crearPedido(Order order) {
+    public Order crearPedido(
+            Order order
+    ) {
 
-        order.setEstado(OrderStatus.CREADO);
-        order.setFechaCreacion(LocalDateTime.now());
+        order.setEstado(
+                OrderStatus.CREADO
+        );
 
-        double total = order.getItems()
-                .stream()
-                .mapToDouble(item ->
-                        item.getPrecioUnitario()
-                                * item.getCantidad()
-                )
-                .sum();
+        order.setFechaCreacion(
+                LocalDateTime.now()
+        );
+
+        double total =
+                order.getItems()
+                        .stream()
+                        .mapToDouble(
+                                item ->
+                                        item.getPrecioUnitario()
+                                                * item.getCantidad()
+                        )
+                        .sum();
 
         order.setTotal(total);
 
         return orderRepository.save(order);
     }
 
-    /**
-     * Solo OPERADOR / ADMIN deberían llegar a este método
-     * a través del BFF.
-     */
     @Transactional
     public Order cambiarEstado(
             Long id,
             OrderStatus nuevoEstado
     ) {
 
-        Order order = obtenerPorId(id);
+        Order order =
+                obtenerPorId(id);
 
         OrderStatus estadoActual =
                 order.getEstado();
 
-        // CANCELADO tiene un endpoint separado para CLIENTE.
-        if (nuevoEstado == OrderStatus.CANCELADO) {
+        /*
+         * CANCELADO no se procesa desde este método.
+         */
+        if (
+                nuevoEstado
+                        == OrderStatus.CANCELADO
+        ) {
+
             throw new IllegalStateException(
-                    "La cancelación debe realizarse mediante el endpoint de cancelar pedido"
+                    "La cancelación debe realizarse mediante "
+                            + "el endpoint de cancelar pedido"
             );
         }
 
-        if (!esTransicionValida(
-                estadoActual,
-                nuevoEstado
-        )) {
+        /*
+         * Validamos que la transición sea correcta.
+         */
+        if (
+                !esTransicionValida(
+                        estadoActual,
+                        nuevoEstado
+                )
+        ) {
+
             throw new IllegalStateException(
                     "Transición de estado no permitida: de "
                             + estadoActual
@@ -95,14 +131,32 @@ public class OrderService {
             );
         }
 
-        // El stock se descuenta una sola vez:
-        // cuando el pedido pasa de CREADO a ACEPTADO.
+        /*
+         * ==================================================
+         * FLUJO TEMPORAL
+         * ==================================================
+         *
+         * Todavía mantenemos el descuento directo de stock
+         * mediante CatalogClient.
+         *
+         * Esto evita romper el sistema mientras probamos
+         * RabbitMQ.
+         *
+         * Después eliminaremos esta llamada y ms-catalogo
+         * consumirá el evento desde RabbitMQ.
+         */
         if (
-                estadoActual == OrderStatus.CREADO
-                        && nuevoEstado == OrderStatus.ACEPTADO
+                estadoActual
+                        == OrderStatus.CREADO
+                        &&
+                        nuevoEstado
+                                == OrderStatus.ACEPTADO
         ) {
 
-            for (OrderItem item : order.getItems()) {
+            for (
+                    OrderItem item :
+                    order.getItems()
+            ) {
 
                 catalogClient.reducirStock(
                         item.getProductoId(),
@@ -111,26 +165,71 @@ public class OrderService {
             }
         }
 
+        /*
+         * Guardamos primero el nuevo estado.
+         */
         order.setEstado(nuevoEstado);
 
-        return orderRepository.save(order);
+        Order guardado =
+                orderRepository.save(order);
+
+        /*
+         * ==================================================
+         * RABBITMQ
+         * ==================================================
+         *
+         * Si el pedido acaba de pasar de:
+         *
+         * CREADO -> ACEPTADO
+         *
+         * publicamos un evento por cada producto.
+         *
+         * POR AHORA ms-catalogo todavía NO lo consume.
+         */
+        if (
+                estadoActual
+                        == OrderStatus.CREADO
+                        &&
+                        nuevoEstado
+                                == OrderStatus.ACEPTADO
+        ) {
+
+            for (
+                    OrderItem item :
+                    guardado.getItems()
+            ) {
+
+                pedidoEventPublisher
+                        .publicarPedidoAceptado(
+                                guardado.getId(),
+                                item.getProductoId(),
+                                item.getCantidad()
+                        );
+            }
+        }
+
+        return guardado;
     }
 
-    /**
-     * Cancelación exclusiva para el flujo del CLIENTE.
-     *
-     * El cliente solo puede cancelar mientras el pedido
-     * todavía está en estado CREADO.
+    /*
+     * Cancelación realizada por CLIENTE.
      */
     @Transactional
-    public Order cancelarPedido(Long id) {
+    public Order cancelarPedido(
+            Long id
+    ) {
 
-        Order order = obtenerPorId(id);
+        Order order =
+                obtenerPorId(id);
 
-        if (order.getEstado() != OrderStatus.CREADO) {
+        if (
+                order.getEstado()
+                        != OrderStatus.CREADO
+        ) {
 
             throw new IllegalStateException(
-                    "Solo se puede cancelar un pedido que esté en estado CREADO"
+                    "Solo se puede cancelar un pedido "
+                            + "que esté en estado CREADO"
             );
         }
 
@@ -140,30 +239,48 @@ public class OrderService {
 
         return orderRepository.save(order);
     }
+
+    /*
+     * Cancelación realizada por ADMIN.
+     */
     @Transactional
-    public Order cancelarPedidoAdmin(Long id) {
+    public Order cancelarPedidoAdmin(
+            Long id
+    ) {
 
-        Order order = obtenerPorId(id);
+        Order order =
+                obtenerPorId(id);
 
-        if (order.getEstado() == OrderStatus.CANCELADO) {
+        if (
+                order.getEstado()
+                        == OrderStatus.CANCELADO
+        ) {
+
             throw new IllegalStateException(
                     "El pedido ya se encuentra cancelado"
             );
         }
 
-        if (order.getEstado() == OrderStatus.ENTREGADO) {
+        if (
+                order.getEstado()
+                        == OrderStatus.ENTREGADO
+        ) {
+
             throw new IllegalStateException(
-                    "No se puede cancelar un pedido que ya fue entregado"
+                    "No se puede cancelar un pedido "
+                            + "que ya fue entregado"
             );
         }
 
-        order.setEstado(OrderStatus.CANCELADO);
+        order.setEstado(
+                OrderStatus.CANCELADO
+        );
 
         return orderRepository.save(order);
     }
 
-    /**
-     * Flujo válido de OPERADOR / ADMIN:
+    /*
+     * Flujo permitido:
      *
      * CREADO
      *   -> ACEPTADO
@@ -176,8 +293,6 @@ public class OrderService {
      *
      * DESPACHADO
      *   -> ENTREGADO
-     *
-     * ENTREGADO y CANCELADO son estados finales.
      */
     private boolean esTransicionValida(
             OrderStatus actual,
@@ -191,20 +306,29 @@ public class OrderService {
         switch (actual) {
 
             case CREADO:
-                return nuevo == OrderStatus.ACEPTADO;
+
+                return nuevo
+                        == OrderStatus.ACEPTADO;
 
             case ACEPTADO:
-                return nuevo == OrderStatus.EN_PREPARACION;
+
+                return nuevo
+                        == OrderStatus.EN_PREPARACION;
 
             case EN_PREPARACION:
-                return nuevo == OrderStatus.DESPACHADO;
+
+                return nuevo
+                        == OrderStatus.DESPACHADO;
 
             case DESPACHADO:
-                return nuevo == OrderStatus.ENTREGADO;
+
+                return nuevo
+                        == OrderStatus.ENTREGADO;
 
             case ENTREGADO:
             case CANCELADO:
             default:
+
                 return false;
         }
     }
