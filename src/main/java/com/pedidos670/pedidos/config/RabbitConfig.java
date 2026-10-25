@@ -89,7 +89,7 @@ public class RabbitConfig {
             );
 
             System.out.println(
-                    "RabbitMQ inicializado correctamente"
+                    "RabbitMQ inicializado correctamenteeee"
             );
 
             System.out.println(
