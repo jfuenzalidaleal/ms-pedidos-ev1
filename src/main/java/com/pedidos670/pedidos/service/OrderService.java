@@ -9,6 +9,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 public class OrderService {
@@ -39,6 +40,11 @@ public class OrderService {
                                 "Pedido no encontrado con ID: " + id
                         )
                 );
+    }
+
+    // Seguimiento público por código (ej: P360-AB12CD)
+    public Optional<Order> obtenerPorCodigoSeguimiento(String codigo) {
+        return orderRepository.findByCodigoSeguimiento(codigo);
     }
 
     @Transactional

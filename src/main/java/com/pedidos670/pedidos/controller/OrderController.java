@@ -8,11 +8,14 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.regex.Pattern;
 
 @RestController
 @RequestMapping("/api/pedidos")
 @CrossOrigin(origins = "*")
 public class OrderController {
+
+    private static final Pattern EMAIL = Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
 
     private final OrderService orderService;
 
@@ -25,6 +28,31 @@ public class OrderController {
     public ResponseEntity<Order> crearPedido(@RequestBody Order order) {
         Order nuevoPedido = orderService.crearPedido(order);
         return new ResponseEntity<>(nuevoPedido, HttpStatus.CREATED);
+    }
+
+    // PÚBLICO: compra sin iniciar sesión. clienteId debe ser el correo del comprador.
+    @PostMapping("/invitado")
+    public ResponseEntity<?> crearPedidoInvitado(@RequestBody Order order) {
+        String email = order.getClienteId() == null ? "" : order.getClienteId().trim().toLowerCase();
+        if (!EMAIL.matcher(email).matches()) {
+            return ResponseEntity.badRequest().body("Debes indicar un correo válido.");
+        }
+        if (order.getItems() == null || order.getItems().isEmpty()) {
+            return ResponseEntity.badRequest().body("El pedido debe tener al menos un producto.");
+        }
+        order.setClienteId(email);
+        order.setEstado(OrderStatus.CREADO);   // un invitado no puede elegir el estado
+        order.setCodigoSeguimiento(null);      // lo genera el servidor
+        Order nuevoPedido = orderService.crearPedido(order);
+        return new ResponseEntity<>(nuevoPedido, HttpStatus.CREATED);
+    }
+
+    // PÚBLICO: seguimiento por código
+    @GetMapping("/seguimiento/{codigo}")
+    public ResponseEntity<Order> seguimiento(@PathVariable String codigo) {
+        return orderService.obtenerPorCodigoSeguimiento(codigo.trim().toUpperCase())
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
     // Obtener pedidos por cliente
