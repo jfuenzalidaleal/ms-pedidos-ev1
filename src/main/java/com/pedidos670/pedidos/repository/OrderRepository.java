@@ -8,7 +8,7 @@ import java.util.Optional;
 
 @Repository
 public interface OrderRepository extends  JpaRepository<Order, Long> {
-    //Permite que el rol CLIENTE consulte unicamente sus propios pedidos
+    //Permite que el rol CLIENTE consulte unicamente sus pedidos
 
     List<Order> findByClienteId(String clienteId);
 
