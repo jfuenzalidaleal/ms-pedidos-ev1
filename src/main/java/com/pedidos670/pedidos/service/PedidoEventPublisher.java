@@ -1,24 +1,26 @@
 package com.pedidos670.pedidos.service;
 
-import com.pedidos670.pedidos.config.RabbitConfig;
 import com.pedidos670.pedidos.event.PedidoAceptadoEvent;
-
+import com.pedidos670.pedidos.messaging.RabbitNames;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+@Slf4j
 @Service
+@RequiredArgsConstructor
 public class PedidoEventPublisher {
 
-    private final RabbitTemplate rabbitTemplate;
+    private static final String EVENT_TYPE_PEDIDO_ACEPTADO =
+            "PEDIDO_ACEPTADO";
 
-    public PedidoEventPublisher(
-            RabbitTemplate rabbitTemplate
-    ) {
-        this.rabbitTemplate = rabbitTemplate;
-    }
+    private static final int EVENT_VERSION = 1;
+
+    private final RabbitTemplate rabbitTemplate;
 
     public void publicarPedidoAceptado(
             Long pedidoId,
@@ -29,8 +31,8 @@ public class PedidoEventPublisher {
         PedidoAceptadoEvent evento =
                 PedidoAceptadoEvent.builder()
                         .eventId(UUID.randomUUID())
-                        .eventType("PEDIDO_ACEPTADO")
-                        .version(1)
+                        .eventType(EVENT_TYPE_PEDIDO_ACEPTADO)
+                        .version(EVENT_VERSION)
                         .pedidoId(pedidoId)
                         .productoId(productoId)
                         .cantidad(cantidad)
@@ -38,16 +40,17 @@ public class PedidoEventPublisher {
                         .build();
 
         rabbitTemplate.convertAndSend(
-                RabbitConfig.EXCHANGE_PEDIDOS,
-                RabbitConfig.ROUTING_PEDIDO_ACEPTADO,
+                RabbitNames.PEDIDOS_EXCHANGE,
+                RabbitNames.PEDIDO_ACEPTADO_ROUTING_KEY,
                 evento
         );
 
-        System.out.println(
-                "Evento PEDIDO_ACEPTADO enviado a RabbitMQ"
-                        + " | pedidoId=" + pedidoId
-                        + " | productoId=" + productoId
-                        + " | cantidad=" + cantidad
+        log.info(
+                "Evento PEDIDO_ACEPTADO enviado a RabbitMQ | eventId={} | pedidoId={} | productoId={} | cantidad={}",
+                evento.getEventId(),
+                pedidoId,
+                productoId,
+                cantidad
         );
     }
 }
